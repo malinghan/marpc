@@ -27,22 +27,31 @@ public class NettyRpcClient implements RpcTransport {
     private final AtomicInteger sequenceIdGenerator = new AtomicInteger(0);
     private final EventLoopGroup workerGroup = new NioEventLoopGroup();
     private final int timeoutMs;
+    private final int nettyPort;
 
-    public NettyRpcClient(int timeoutMs) {
+    public NettyRpcClient(int timeoutMs, int nettyPort) {
         this.timeoutMs = timeoutMs;
+        this.nettyPort = nettyPort;
     }
 
     @Override
     public RpcResponse send(String instance, RpcRequest request) {
         try {
-            Channel channel = getOrCreateChannel(instance);
+            String host = instance.split(":")[0];
+            String nettyInstance = host + ":" + nettyPort;
+            Channel channel = getOrCreateChannel(nettyInstance);
             int sequenceId = sequenceIdGenerator.incrementAndGet();
             CompletableFuture<RpcResponse> future = new CompletableFuture<>();
             pendingRequests.put(sequenceId, future);
 
             byte[] payload = JSON.toJSONBytes(request);
             MarpcFrame frame = new MarpcFrame(MarpcProtocol.TYPE_REQUEST, sequenceId, payload);
-            channel.writeAndFlush(frame);
+            channel.writeAndFlush(frame).addListener(f -> {
+                if (!f.isSuccess()) {
+                    pendingRequests.remove(sequenceId);
+                    future.completeExceptionally(f.cause());
+                }
+            });
 
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
@@ -50,7 +59,11 @@ public class NettyRpcClient implements RpcTransport {
         }
     }
 
-    private Channel getOrCreateChannel(String instance) throws InterruptedException {
+    private Channel getOrCreateChannel(String instance) {
+        Channel ch = channelPool.get(instance);
+        if (ch != null && ch.isActive()) return ch;
+        // channel 不存在或已断开，重建
+        channelPool.remove(instance);
         return channelPool.computeIfAbsent(instance, key -> {
             try {
                 String[] parts = key.split(":");

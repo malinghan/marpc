@@ -20,6 +20,8 @@ public class NettyClientHandler extends SimpleChannelInboundHandler<MarpcFrame> 
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, MarpcFrame frame) {
+        log.info("[NettyClientHandler] 收到响应, sequenceId={}, payloadLen={}",
+                frame.getSequenceId(), frame.getPayload().length);
         CompletableFuture<RpcResponse> future = pendingRequests.remove(frame.getSequenceId());
         if (future != null) {
             RpcResponse response = JSON.parseObject(frame.getPayload(), RpcResponse.class);

@@ -3,7 +3,7 @@ spring:
     name: marpc-demo-consumer
 
 server:
-  port: 9081
+  port: 9085
 
 marpc:
   zk:
@@ -32,3 +32,6 @@ marpc:
     gray:
       enabled: false
       ratio: 50
+  transport: netty
+  netty:
+    port: 9091

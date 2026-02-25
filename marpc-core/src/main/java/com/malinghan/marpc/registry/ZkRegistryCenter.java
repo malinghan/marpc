@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.recipes.cache.TreeCache;
+import org.apache.curator.framework.recipes.cache.TreeCacheEvent;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.zookeeper.CreateMode;
 
@@ -101,8 +102,20 @@ public class ZkRegistryCenter implements RegistryCenter {
             String parent = buildServicePath(service);
             TreeCache cache = TreeCache.newBuilder(client, parent).build();
             cache.getListenable().addListener((c, event) -> {
-                log.info("[ZkRegistryCenter] 服务变更: {}", service);
-                listener.onChange(fetchAll(service));
+                TreeCacheEvent.Type type = event.getType();
+                if (type != TreeCacheEvent.Type.NODE_ADDED
+                        && type != TreeCacheEvent.Type.NODE_UPDATED
+                        && type != TreeCacheEvent.Type.NODE_REMOVED) {
+                    return;
+                }
+                // 只关心子节点（实例节点）变更，忽略父节点自身的事件
+                if (event.getData() == null) return;
+                String changedPath = event.getData().getPath();
+                if (changedPath.equals(parent)) return;
+
+                List<String> instances = fetchAll(service);
+                log.info("[ZkRegistryCenter] 服务变更: {} -> {}", service, instances);
+                listener.onChange(instances);
             });
             cache.start();
             caches.put(service, cache);

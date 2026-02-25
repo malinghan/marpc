@@ -21,6 +21,8 @@ public class NettyServerHandler extends SimpleChannelInboundHandler<MarpcFrame> 
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, MarpcFrame frame) {
+        log.info("[NettyServerHandler] 收到请求, sequenceId={}, payloadLen={}",
+                frame.getSequenceId(), frame.getPayload().length);
         RpcRequest request = JSON.parseObject(frame.getPayload(), RpcRequest.class);
 
         if (request.getContext() != null && !request.getContext().isEmpty()) {
@@ -41,6 +43,7 @@ public class NettyServerHandler extends SimpleChannelInboundHandler<MarpcFrame> 
 
         byte[] payload = JSON.toJSONBytes(response);
         MarpcFrame responseFrame = new MarpcFrame(MarpcProtocol.TYPE_RESPONSE, frame.getSequenceId(), payload);
+        log.info("[NettyServerHandler] 发送响应, sequenceId={}, status={}", frame.getSequenceId(), response.isStatus());
         ctx.writeAndFlush(responseFrame);
     }
 

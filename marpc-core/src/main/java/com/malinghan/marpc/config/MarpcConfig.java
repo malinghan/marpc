@@ -91,6 +91,9 @@ public class MarpcConfig {
     @Value("${marpc.netty.port:9090}")
     private int nettyPort;
 
+    @Value("${marpc.netty.server.enabled:false}")
+    private boolean nettyServerEnabled;
+
     @Bean
     public RegistryCenter registryCenter() {
         ZkRegistryCenter rc = new ZkRegistryCenter(zkAddress, app, env);
@@ -173,14 +176,14 @@ public class MarpcConfig {
     public RpcTransport rpcTransport() {
         if ("netty".equalsIgnoreCase(transportType)) {
             log.info("[MarpcConfig] 使用 Netty 传输");
-            return new NettyRpcClient(timeout);
+            return new NettyRpcClient(timeout, nettyPort);
         }
         log.info("[MarpcConfig] 使用 OkHttp 传输");
         return new OkHttpTransport(timeout);
     }
 
     @Bean
-    @ConditionalOnProperty(name = "marpc.transport", havingValue = "netty")
+    @ConditionalOnProperty(name = "marpc.netty.server.enabled", havingValue = "true")
     public NettyRpcServer nettyRpcServer(ProviderBootstrap providerBootstrap) {
         return new NettyRpcServer(providerBootstrap, nettyPort);
     }
