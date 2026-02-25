@@ -12,7 +12,8 @@
       "Bash(git commit -m \"$\\(cat <<'EOF'\nfix: 修复 Provider 服务注册失败问题\n\n1. 将 MarpcApplication 移至根包 com.malinghan.marpc，确保组件扫描覆盖所有子包\n2. 使用 AopUtils.getTargetClass\\(\\) 获取真实实现类，兼容 CGLIB 代理\n3. 通过 ContextRefreshedEvent 延迟启动，确保所有 Bean 注册完成后再扫描\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "mcp__ide__getDiagnostics",
       "Bash(git commit -m \"$\\(cat <<'EOF'\nfeat: v2.0 方法重载、类型转换、注册中心、负载均衡\n\n- RpcRequest 新增 methodSign 字段，格式 methodName@paramCount_type1_type2\n- Consumer 端自动生成方法签名，Provider 端按签名精确匹配方法，解决重载歧义\n- Provider 端 convertArgs 根据方法参数类型做 JSON 反序列化转换\n- 抽象 RegistryCenter 接口，实现 ZkRegistryCenter（Curator + Zookeeper 临时节点）\n- Provider 启动时注册服务，优雅关闭时注销\n- Consumer 订阅注册中心变更，实例上下线自动刷新服务列表\n- 抽象 LoadBalancer 接口，实现 RoundRobinLoadBalancer 和 RandomLoadBalancer\n- Consumer 通过 Supplier<String> 动态选取实例，支持热更新\n- 配置文件迁移至 application.yaml\n- 新增 ProviderBootstrapV2Test 覆盖重载、类型转换、负载均衡场景\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git tag v2.0 && git push origin master && git push origin v2.0)"
+      "Bash(git tag v2.0 && git push origin master && git push origin v2.0)",
+      "Bash(git add -A && git status)"
     ]
   }
 }
