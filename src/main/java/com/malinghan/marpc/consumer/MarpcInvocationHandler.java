@@ -8,58 +8,57 @@ import okhttp3.*;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.Set;
+import java.util.function.Supplier;
 
 public class MarpcInvocationHandler implements InvocationHandler {
 
     private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
-    // 非用户自定义接口的包前缀，来自这些包的方法直接本地执行
     private static final Set<String> SYSTEM_PACKAGES = Set.of("java.", "javax.", "org.springframework.");
 
     private final Class<?> service;
-    private final String providerUrl;
+    // 每次调用时动态获取 URL，支持负载均衡
+    private final Supplier<String> instanceSupplier;
     private final OkHttpClient client = new OkHttpClient();
 
-    public MarpcInvocationHandler(Class<?> service, String providerUrl) {
+    public MarpcInvocationHandler(Class<?> service, Supplier<String> instanceSupplier) {
         this.service = service;
-        this.providerUrl = providerUrl;
+        this.instanceSupplier = instanceSupplier;
     }
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        // 优化2：非用户自定义接口的方法（Object、Spring 等）直接本地执行
         if (isSystemMethod(method)) {
-            System.out.println("[MarpcInvocationHandler] 过滤系统方法，本地执行: " + method.getDeclaringClass().getName() + "#" + method.getName());
             return method.invoke(this, args);
         }
-
-        System.out.println("[MarpcInvocationHandler] 发起远程调用: " + service.getCanonicalName() + "#" + method.getName()
-                + ", args=" + java.util.Arrays.toString(args));
 
         RpcRequest request = new RpcRequest();
         request.setService(service.getCanonicalName());
         request.setMethod(method.getName());
+        request.setMethodSign(buildMethodSign(method));
         request.setArgs(args);
 
-        RpcResponse response = post(request);
-        System.out.println("[MarpcInvocationHandler] 收到响应: status=" + response.isStatus()
-                + ", data=" + response.getData()
-                + ", error=" + response.getErrorMessage());
+        String url = instanceSupplier.get();
+        RpcResponse response = post(url, request);
 
         if (!response.isStatus()) {
-            // 优化3：将服务端封装的异常信息透传给调用方
             throw new RuntimeException(response.getErrorMessage());
         }
 
-        // 优化1：基本类型及其包装类直接强转，跳过 JSON 转换
         Class<?> returnType = method.getReturnType();
+        if (returnType == void.class) return null;
         if (isPrimitive(returnType)) {
-            Object result = castPrimitive(returnType, response.getData());
-            System.out.println("[MarpcInvocationHandler] 基本类型直接返回: " + result);
-            return result;
+            return castPrimitive(returnType, response.getData());
         }
-        Object result = JSON.to(returnType, response.getData());
-        System.out.println("[MarpcInvocationHandler] JSON 反序列化返回: " + result);
-        return result;
+        return JSON.to(returnType, response.getData());
+    }
+
+    private String buildMethodSign(Method method) {
+        Class<?>[] params = method.getParameterTypes();
+        if (params.length == 0) return method.getName() + "@0";
+        String types = java.util.Arrays.stream(params)
+                .map(Class::getCanonicalName)
+                .collect(java.util.stream.Collectors.joining("_"));
+        return method.getName() + "@" + params.length + "_" + types;
     }
 
     private boolean isSystemMethod(Method method) {
@@ -88,10 +87,12 @@ public class MarpcInvocationHandler implements InvocationHandler {
         return data;
     }
 
-    private RpcResponse post(RpcRequest request) throws Exception {
+    private RpcResponse post(String instance, RpcRequest request) throws Exception {
+        // instance 格式为 host:port
+        String url = "http://" + instance + "/marpc";
         String body = JSON.toJSONString(request);
         Request httpRequest = new Request.Builder()
-                .url(providerUrl + "/marpc")
+                .url(url)
                 .post(RequestBody.create(body, JSON_TYPE))
                 .build();
         try (Response resp = client.newCall(httpRequest).execute()) {

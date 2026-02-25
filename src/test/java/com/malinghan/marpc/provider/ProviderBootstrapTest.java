@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 
+import com.malinghan.marpc.registry.RegistryCenter;
+
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +43,8 @@ class ProviderBootstrapTest {
         HelloServiceImpl impl = new HelloServiceImpl();
         when(ctx.getBeansWithAnnotation(MarpcProvider.class)).thenReturn(Map.of("helloService", impl));
 
-        bootstrap = new ProviderBootstrap(ctx);
+        RegistryCenter registry = mock(RegistryCenter.class);
+        bootstrap = new ProviderBootstrap(ctx, registry, "localhost:8080");
         bootstrap.start();
     }
 

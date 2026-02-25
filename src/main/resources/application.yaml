@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: marpc
+
+marpc:
+  zk:
+    address: localhost:2181
+  app: marpc-app
+  env: dev
+  provider:
+    instance: localhost:8080
+  loadbalancer: roundrobin

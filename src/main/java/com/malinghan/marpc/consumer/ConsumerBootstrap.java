@@ -1,49 +1,56 @@
 package com.malinghan.marpc.consumer;
 
 import com.malinghan.marpc.annotation.MarpcConsumer;
+import com.malinghan.marpc.loadbalance.LoadBalancer;
+import com.malinghan.marpc.registry.RegistryCenter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Consumer 侧启动引导类，负责扫描并注入 RPC 代理。
- *
- * <p>启动时遍历容器中所有 Bean 的字段，对标注了 {@link MarpcConsumer} 的字段
- * 创建 JDK 动态代理并注入，业务代码调用接口方法时会透明地发起远程调用。
- */
 @Slf4j
 public class ConsumerBootstrap {
 
     private final ApplicationContext context;
-    /** Provider 的基础 URL，从配置项 marpc.provider.url 读取 */
-    private final String providerUrl;
+    private final RegistryCenter registryCenter;
+    private final LoadBalancer loadBalancer;
+    // service -> 当前可用实例列表（动态刷新）
+    private final Map<String, List<String>> serviceInstances = new ConcurrentHashMap<>();
 
-    public ConsumerBootstrap(ApplicationContext context, String providerUrl) {
+    public ConsumerBootstrap(ApplicationContext context, RegistryCenter registryCenter, LoadBalancer loadBalancer) {
         this.context = context;
-        this.providerUrl = providerUrl;
+        this.registryCenter = registryCenter;
+        this.loadBalancer = loadBalancer;
     }
 
-    /**
-     * 遍历容器所有 Bean，为标注 {@link MarpcConsumer} 的字段注入代理。
-     * 由 {@link com.malinghan.marpc.config.MarpcConfig} 在 Bean 初始化时调用。
-     */
     public void start() {
         Map<String, Object> beans = context.getBeansOfType(Object.class);
         beans.values().forEach(this::injectConsumers);
     }
 
-    /** 检查单个 Bean 的所有字段，发现 {@link MarpcConsumer} 注解则注入代理 */
     private void injectConsumers(Object bean) {
         for (Field field : bean.getClass().getDeclaredFields()) {
             if (field.isAnnotationPresent(MarpcConsumer.class)) {
+                Class<?> iface = field.getType();
+                String service = iface.getCanonicalName();
+
+                // 拉取初始实例列表并订阅变更
+                List<String> instances = registryCenter.fetchAll(service);
+                serviceInstances.put(service, instances);
+                registryCenter.subscribe(service, newInstances -> {
+                    log.info("[ConsumerBootstrap] 服务实例变更: {} -> {}", service, newInstances);
+                    serviceInstances.put(service, newInstances);
+                });
+
                 field.setAccessible(true);
-                Object proxy = createProxy(field.getType());
+                Object proxy = createProxy(iface);
                 try {
                     field.set(bean, proxy);
-                    log.info("marpc consumer injected: {}", field.getType().getCanonicalName());
+                    log.info("[ConsumerBootstrap] 注入代理: {}", service);
                 } catch (IllegalAccessException e) {
                     throw new RuntimeException(e);
                 }
@@ -51,13 +58,19 @@ public class ConsumerBootstrap {
         }
     }
 
-    /** 为指定接口创建 JDK 动态代理，实际调用由 {@link MarpcInvocationHandler} 处理 */
     @SuppressWarnings("unchecked")
     private <T> T createProxy(Class<T> iface) {
+        String service = iface.getCanonicalName();
         return (T) Proxy.newProxyInstance(
                 iface.getClassLoader(),
                 new Class[]{iface},
-                new MarpcInvocationHandler(iface, providerUrl)
+                new MarpcInvocationHandler(iface, () -> {
+                    List<String> instances = serviceInstances.get(service);
+                    if (instances == null || instances.isEmpty()) {
+                        throw new RuntimeException("no available instance for: " + service);
+                    }
+                    return loadBalancer.choose(instances);
+                })
         );
     }
 }

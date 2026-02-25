@@ -1,49 +1,61 @@
 package com.malinghan.marpc.provider;
 
+import com.alibaba.fastjson2.JSON;
 import com.malinghan.marpc.annotation.MarpcProvider;
 import com.malinghan.marpc.core.RpcRequest;
 import com.malinghan.marpc.core.RpcResponse;
+import com.malinghan.marpc.registry.RegistryCenter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.context.ApplicationContext;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class ProviderBootstrap {
 
-    // 优化2：非用户自定义接口的包前缀，注册时过滤
     private static final Set<String> SYSTEM_PACKAGES = Set.of("java.", "javax.", "org.springframework.");
 
     private final ApplicationContext context;
+    private final RegistryCenter registryCenter;
+    private final String instance; // host:port
     private final Map<String, Object> skeleton = new HashMap<>();
 
-    public ProviderBootstrap(ApplicationContext context) {
+    public ProviderBootstrap(ApplicationContext context, RegistryCenter registryCenter, String instance) {
         this.context = context;
+        this.registryCenter = registryCenter;
+        this.instance = instance;
     }
 
     public void start() {
-        System.out.println("[ProviderBootstrap] 开始扫描 @MarpcProvider 注解的 Bean...");
         Map<String, Object> providers = context.getBeansWithAnnotation(MarpcProvider.class);
-        System.out.println("[ProviderBootstrap] 找到 " + providers.size() + " 个 Provider Bean");
+        log.info("[ProviderBootstrap] 找到 {} 个 Provider Bean", providers.size());
         providers.values().forEach(bean -> {
             Class<?> targetClass = AopUtils.getTargetClass(bean);
             for (Class<?> iface : targetClass.getInterfaces()) {
-                // 优化2：过滤掉系统接口，只注册用户自定义接口
                 if (isUserDefinedInterface(iface)) {
-                    skeleton.put(iface.getCanonicalName(), bean);
-                    System.out.println("[ProviderBootstrap] 注册服务: " + iface.getCanonicalName());
-                    log.info("marpc provider registered: {}", iface.getCanonicalName());
-                } else {
-                    System.out.println("[ProviderBootstrap] 过滤系统接口: " + iface.getCanonicalName());
+                    String service = iface.getCanonicalName();
+                    skeleton.put(service, bean);
+                    registryCenter.register(service, instance);
+                    log.info("[ProviderBootstrap] 注册服务: {} -> {}", service, instance);
                 }
             }
         });
-        System.out.println("[ProviderBootstrap] 服务注册完成，共 " + skeleton.size() + " 个服务");
+        log.info("[ProviderBootstrap] 服务注册完成，共 {} 个服务", skeleton.size());
+    }
+
+    public void stop() {
+        skeleton.keySet().forEach(service -> {
+            registryCenter.unregister(service, instance);
+            log.info("[ProviderBootstrap] 注销服务: {} -> {}", service, instance);
+        });
+        registryCenter.stop();
     }
 
     private boolean isUserDefinedInterface(Class<?> iface) {
@@ -51,47 +63,54 @@ public class ProviderBootstrap {
         return SYSTEM_PACKAGES.stream().noneMatch(pkg::startsWith);
     }
 
-    /**
-     * 处理一次 RPC 请求：查找服务实现 -> 定位方法 -> 反射调用 -> 包装响应。
-     * 任何异常都被捕获并转为 error 响应，不向传输层抛出。
-     */
     public RpcResponse invoke(RpcRequest request) {
-        System.out.println("[ProviderBootstrap] 收到请求: service=" + request.getService()
-                + ", method=" + request.getMethod()
-                + ", args=" + java.util.Arrays.toString(request.getArgs()));
-        System.out.println("[ProviderBootstrap] 当前 skeleton keys: " + skeleton.keySet());
         Object bean = skeleton.get(request.getService());
         if (bean == null) {
-            System.out.println("[ProviderBootstrap] 服务未找到: " + request.getService());
             return RpcResponse.error("service not found: " + request.getService());
         }
         try {
-            Method method = findMethod(bean.getClass(), request.getMethod(), request.getArgs());
-            System.out.println("[ProviderBootstrap] 执行方法: " + method);
-            Object result = ReflectionUtils.invokeMethod(method, bean, request.getArgs());
-            System.out.println("[ProviderBootstrap] 执行结果: " + result);
+            Method method = findMethod(AopUtils.getTargetClass(bean), request.getMethodSign(), request.getMethod());
+            Object[] typedArgs = convertArgs(method, request.getArgs());
+            Object result = ReflectionUtils.invokeMethod(method, bean, typedArgs);
             return RpcResponse.ok(result);
         } catch (Exception e) {
-            // 优化3：封装异常类名和消息，透传给 Consumer
-            log.error("marpc invoke error", e);
-            String errorMsg = e.getClass().getName() + ": " +
-                (e.getMessage() != null ? e.getMessage() : "null");
-            System.out.println("[ProviderBootstrap] 执行异常: " + errorMsg);
-            return RpcResponse.error(errorMsg);
+            log.error("[ProviderBootstrap] invoke error", e);
+            String msg = e.getClass().getName() + ": " + (e.getMessage() != null ? e.getMessage() : "null");
+            return RpcResponse.error(msg);
         }
     }
 
-    /**
-     * 按方法名和参数个数在实现类上定位方法。
-     * v1.0 不支持同名同参数数量的重载，遇到第一个匹配即返回。
-     */
-    private Method findMethod(Class<?> clazz, String methodName, Object[] args) {
-        int argCount = args == null ? 0 : args.length;
-        for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(methodName) && m.getParameterCount() == argCount) {
-                return m;
+    private Method findMethod(Class<?> clazz, String methodSign, String methodName) {
+        if (methodSign != null && !methodSign.isEmpty()) {
+            for (Method m : clazz.getMethods()) {
+                if (buildSign(m).equals(methodSign)) return m;
             }
         }
-        throw new RuntimeException("method not found: " + methodName);
+        int argCount = methodSign != null && methodSign.contains("@")
+                ? Integer.parseInt(methodSign.split("@")[1].split("_")[0])
+                : 0;
+        for (Method m : clazz.getMethods()) {
+            if (m.getName().equals(methodName) && m.getParameterCount() == argCount) return m;
+        }
+        throw new RuntimeException("method not found: " + methodSign);
+    }
+
+    private String buildSign(Method m) {
+        Class<?>[] params = m.getParameterTypes();
+        if (params.length == 0) return m.getName() + "@0";
+        String types = Arrays.stream(params)
+                .map(Class::getCanonicalName)
+                .collect(Collectors.joining("_"));
+        return m.getName() + "@" + params.length + "_" + types;
+    }
+
+    private Object[] convertArgs(Method method, Object[] args) {
+        if (args == null || args.length == 0) return args;
+        Class<?>[] paramTypes = method.getParameterTypes();
+        Object[] result = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            result[i] = JSON.to(paramTypes[i], args[i]);
+        }
+        return result;
     }
 }

@@ -1,7 +1,11 @@
 package com.malinghan.marpc.config;
 
 import com.malinghan.marpc.consumer.ConsumerBootstrap;
+import com.malinghan.marpc.loadbalance.LoadBalancer;
+import com.malinghan.marpc.loadbalance.RoundRobinLoadBalancer;
 import com.malinghan.marpc.provider.ProviderBootstrap;
+import com.malinghan.marpc.registry.RegistryCenter;
+import com.malinghan.marpc.registry.ZkRegistryCenter;
 import com.malinghan.marpc.transport.MarpcTransport;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
@@ -10,48 +14,68 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.ContextRefreshedEvent;
 
-/**
- * marpc 框架的核心 Spring 配置类，由 {@link com.malinghan.marpc.annotation.EnableMarpc} 导入。
- *
- * <p>按顺序装配三个核心 Bean：
- * <ol>
- *   <li>{@link ProviderBootstrap} — 扫描并注册服务提供方</li>
- *   <li>{@link ConsumerBootstrap} — 扫描并注入消费方代理（依赖 ProviderBootstrap 先完成注册）</li>
- *   <li>{@link MarpcTransport} — 暴露 HTTP 端点接收远程调用</li>
- * </ol>
- */
 @Configuration
 public class MarpcConfig {
 
-    /** Provider 地址，默认本机 8080，可通过 marpc.provider.url 覆盖 */
-    @Value("${marpc.provider.url:http://localhost:8080}")
-    private String providerUrl;
+    @Value("${marpc.zk.address:localhost:2181}")
+    private String zkAddress;
+
+    @Value("${marpc.app:marpc-app}")
+    private String app;
+
+    @Value("${marpc.env:dev}")
+    private String env;
+
+    /** 本机对外暴露的 host:port，Consumer 通过注册中心发现此地址 */
+    @Value("${marpc.provider.instance:localhost:8080}")
+    private String providerInstance;
+
+    @Value("${marpc.loadbalancer:roundrobin}")
+    private String lbStrategy;
 
     @Bean
-    public ProviderBootstrap providerBootstrap(ApplicationContext context) {
-        return new ProviderBootstrap(context);
+    public RegistryCenter registryCenter() {
+        ZkRegistryCenter rc = new ZkRegistryCenter(zkAddress, app, env);
+        rc.start();
+        return rc;
     }
 
-    /**
-     * ConsumerBootstrap 声明对 ProviderBootstrap 的依赖，确保 Provider 先完成服务注册，
-     * 再执行 Consumer 的代理注入（同进程场景下调用不会在注册前发出）。
-     */
     @Bean
-    public ConsumerBootstrap consumerBootstrap(ApplicationContext context, ProviderBootstrap providerBootstrap) {
-        return new ConsumerBootstrap(context, providerUrl);
+    public LoadBalancer loadBalancer() {
+        if ("random".equalsIgnoreCase(lbStrategy)) {
+            return new com.malinghan.marpc.loadbalance.RandomLoadBalancer();
+        }
+        return new RoundRobinLoadBalancer();
     }
 
-    /**
-     * 监听 ContextRefreshedEvent，在所有 Bean 注册完成后再启动 Provider 和 Consumer。
-     * 这样可以确保 @MarpcProvider 和 @MarpcConsumer 注解的 Bean 都已经被扫描注册。
-     */
+    @Bean
+    public ProviderBootstrap providerBootstrap(ApplicationContext context, RegistryCenter registryCenter) {
+        return new ProviderBootstrap(context, registryCenter, providerInstance);
+    }
+
+    @Bean
+    public ConsumerBootstrap consumerBootstrap(ApplicationContext context,
+                                               RegistryCenter registryCenter,
+                                               LoadBalancer loadBalancer) {
+        return new ConsumerBootstrap(context, registryCenter, loadBalancer);
+    }
+
     @Bean
     public ApplicationListener<ContextRefreshedEvent> marpcBootstrapListener(
             ProviderBootstrap providerBootstrap,
             ConsumerBootstrap consumerBootstrap) {
-        return event -> {
-            providerBootstrap.start();
-            consumerBootstrap.start();
+        // 防止父子容器重复触发
+        return new ApplicationListener<>() {
+            private volatile boolean started = false;
+
+            @Override
+            public void onApplicationEvent(ContextRefreshedEvent event) {
+                if (!started) {
+                    started = true;
+                    providerBootstrap.start();
+                    consumerBootstrap.start();
+                }
+            }
         };
     }
 

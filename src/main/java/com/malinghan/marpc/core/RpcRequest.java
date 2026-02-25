@@ -14,6 +14,11 @@ public class RpcRequest {
     private String service;
     /** 目标方法名，配合参数个数在实现类上定位具体方法 */
     private String method;
-    /** 方法参数列表，JSON 序列化传输，Provider 侧按参数个数匹配方法后直接传入 */
+    /**
+     * 方法签名，格式：methodName@paramCount_type1_type2
+     * 用于解决方法重载歧义，Provider 优先按签名精确匹配
+     */
+    private String methodSign;
+    /** 方法参数列表，JSON 序列化传输，Provider 侧按签名匹配方法后转换为正确类型再传入 */
     private Object[] args;
 }

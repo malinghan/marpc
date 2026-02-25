@@ -21,7 +21,6 @@ class MarpcInvocationHandlerTest {
         int add(int a, int b);
     }
 
-    // 构造一个可注入 mock OkHttpClient 的 handler
     private MarpcInvocationHandler handlerWithMockResponse(Object returnData) throws Exception {
         RpcResponse mockResp = RpcResponse.ok(returnData);
         String respJson = JSON.toJSONString(mockResp);
@@ -41,8 +40,7 @@ class MarpcInvocationHandlerTest {
         OkHttpClient mockClient = mock(OkHttpClient.class);
         when(mockClient.newCall(any())).thenReturn(call);
 
-        MarpcInvocationHandler handler = new MarpcInvocationHandler(HelloService.class, "http://localhost:8080");
-        // 注入 mock client
+        MarpcInvocationHandler handler = new MarpcInvocationHandler(HelloService.class, () -> "localhost:8080");
         Field clientField = MarpcInvocationHandler.class.getDeclaredField("client");
         clientField.setAccessible(true);
         clientField.set(handler, mockClient);
@@ -56,9 +54,7 @@ class MarpcInvocationHandlerTest {
         HelloService proxy = (HelloService) Proxy.newProxyInstance(
                 HelloService.class.getClassLoader(), new Class[]{HelloService.class}, handler);
 
-        String result = proxy.hello("world");
-
-        assertEquals("hello, world", result);
+        assertEquals("hello, world", proxy.hello("world"));
     }
 
     @Test
@@ -67,32 +63,23 @@ class MarpcInvocationHandlerTest {
         HelloService proxy = (HelloService) Proxy.newProxyInstance(
                 HelloService.class.getClassLoader(), new Class[]{HelloService.class}, handler);
 
-        int result = proxy.add(3, 4);
-
-        assertEquals(7, result);
+        assertEquals(7, proxy.add(3, 4));
     }
 
     @Test
     void invoke_errorResponse_throwsRuntimeException() throws Exception {
         RpcResponse errResp = RpcResponse.error("service not found");
-        String respJson = JSON.toJSONString(errResp);
-
-        ResponseBody body = ResponseBody.create(respJson, MediaType.get("application/json"));
+        ResponseBody body = ResponseBody.create(JSON.toJSONString(errResp), MediaType.get("application/json"));
         Response httpResp = new Response.Builder()
                 .request(new Request.Builder().url("http://localhost:8080/marpc").build())
-                .protocol(Protocol.HTTP_1_1)
-                .code(200)
-                .message("OK")
-                .body(body)
-                .build();
+                .protocol(Protocol.HTTP_1_1).code(200).message("OK").body(body).build();
 
         Call call = mock(Call.class);
         when(call.execute()).thenReturn(httpResp);
-
         OkHttpClient mockClient = mock(OkHttpClient.class);
         when(mockClient.newCall(any())).thenReturn(call);
 
-        MarpcInvocationHandler handler = new MarpcInvocationHandler(HelloService.class, "http://localhost:8080");
+        MarpcInvocationHandler handler = new MarpcInvocationHandler(HelloService.class, () -> "localhost:8080");
         Field clientField = MarpcInvocationHandler.class.getDeclaredField("client");
         clientField.setAccessible(true);
         clientField.set(handler, mockClient);
@@ -105,10 +92,9 @@ class MarpcInvocationHandlerTest {
     }
 
     @Test
-    void invoke_requestContainsCorrectServiceAndMethod() throws Exception {
+    void invoke_requestContainsMethodSign() throws Exception {
         MarpcInvocationHandler handler = handlerWithMockResponse("hello, world");
 
-        // 捕获实际发出的 HTTP 请求
         OkHttpClient mockClient = mock(OkHttpClient.class);
         ArgumentCaptor<Request> requestCaptor = ArgumentCaptor.forClass(Request.class);
 
@@ -136,5 +122,6 @@ class MarpcInvocationHandlerTest {
 
         assertEquals(HelloService.class.getCanonicalName(), rpcReq.getService());
         assertEquals("hello", rpcReq.getMethod());
+        assertEquals("hello@1_java.lang.String", rpcReq.getMethodSign());
     }
 }
