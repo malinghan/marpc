@@ -33,5 +33,7 @@ public class MarpcException extends RuntimeException {
         // 网络异常
         NETWORK_ERROR,
         RESPONSE_PARSE_ERROR,
+        // 熔断异常
+        CIRCUIT_BREAKER_OPEN,
     }
 }

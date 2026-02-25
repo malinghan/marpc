@@ -62,28 +62,21 @@
 
 ---
 
-### v4.0 — 实现Rpc的Filter 机制
+### v4.0 — 实现Rpc的Filter 机制 & mock zookeeper测试
 
 **目标：** 可插拔的请求/响应处理链
 
 - 抽象 `Filter` 接口（`preFilter` / `postFilter`）
 - 实现 `CacheFilter`: Consumer 端结果缓存, 节约流量开销
 - 实现 `MockFilter`（接口 Mock 返回，用于测试）
-- Filter 链组装与执行顺序控制
-
+- 处理Filter 链组装与执行顺序控制
+- 引入 Testcontainers 支持 Zookeeper 测试环境隔离，不依赖本地启动zookeeper
+- 生成以上功能的测试方法，简化测试流程，通过构造测试步骤，输出直观结果，来验证代码是否正确
+- 生产v4.0.md
 ---
 
-### v5.0 — 单元测试 & 工程质量
 
-**目标：** 提升工程质量，建立测试基线
-
-- 核心组件单元测试：动态代理、序列化、负载均衡
-- Provider + Consumer 集成联调测试
-- 引入 Testcontainers 支持 Zookeeper 测试环境隔离
-
----
-
-### v6.0 — 异常处理 & 重试 & 熔断
+### v5.0 — 异常处理 & 重试 & 熔断
 
 **目标1：** 异常处理、重试机制，提升调用可靠性
 
@@ -100,53 +93,60 @@
 - 可配置：`faultLimit`（触发阈值）、`halfOpenInitialDelay`、`halfOpenDelay`
 - Half-Open 状态下探测请求，成功则自动恢复
 
----
-
-### v7.0 — 灰度路由
-
-**目标：** 支持灰度发布
+**目标3：** 灰度路由
 
 - 抽象 `Router` 接口
 - 实现 `GrayRouter`：按比例将流量路由到灰度节点
 - Provider 元数据标记：`gray: true/false`
 - Consumer 配置灰度比例：`grayRatio`（0-100）
 
+**其他**：
+- 生成以上功能的测试方法，简化测试流程，通过构造测试步骤，输出直观结果，来验证代码是否正确
+- 生成优化v5.0.md
 ---
 
-### v8.0 — 隐式传参（RpcContext）
+### v6.0 — 隐式传参（RpcContext）
 
-**目标：** 跨调用链传递上下文，避免业务代码侵入
-
+**目标1：** 跨调用链传递上下文，避免业务代码侵入
 - `RpcContext`：ThreadLocal 存储隐式参数
 - 请求头携带 context 参数透传到 Provider
-- 支持 `grayId` 等流量染色标记
+- 支持 `grayId` 等流量染色标记，用于链路监控和日志追踪
 - 调用结束后自动清理 ThreadLocal，防止内存泄漏
+
+
+**目标2:** 使用Netty 传输数据
+
+- OkHttp → Netty 长连接传输，降低连接建立开销,保留OkHttp的传输方式
+- Netty请求连接池优化
+- 使用自定义的二进制协议设计（替换 HTTP+JSON，减少序列化开销）
+
+**其他**：
+- 生成以上功能的测试方法，简化测试流程，通过构造测试步骤，输出直观结果，来验证代码是否正确
+- 生成优化v6.0.md
 
 ---
 
-### v9.0 — 配置中心接入 & 流量控制 
+### v8.0 — 配置中心接入(maconfig&apollo) & 流量控制 
 
 **目标：** 生产可用
-
 - 统一配置类：`AppConfigProperties` / `ProviderConfigProperties` / `ConsumerConfigProperties`
 - Provider 端 TPS 限流（滑动时间窗口，`tc` 参数，默认 30s 窗口）
 - 接入 Apollo 配置中心，支持动态推送配置变更
+- 自研配置中心`maconfig` 接入，待开发
+
+**目标：** 将marpc-core的包发布到maven central中
 - Maven Central 发布流程（flatten-maven-plugin）
 
 ---
 
-### v13.0 — 自研注册中心 & Netty 传输
+### v9.0 — 自研注册中心(maregistry)接入 
 
 **目标：** 去除外部依赖，提升性能
-
 - 实现 `MarpcRegistryCenter`（轻量 HTTP 注册中心，去除 Zookeeper 依赖）
-- OkHttp → Netty 长连接传输，降低连接建立开销
-- 连接池管理
-- 自定义二进制协议设计（替换 HTTP+JSON，减少序列化开销）
 
----
+## 后续规划
 
-### v14.0 — 可观测性（规划）
+### 可观测性（规划 TODO）
 
 **目标：** 线上问题可追踪、可度量
 
@@ -157,7 +157,7 @@
 
 ---
 
-### v15.0 — 服务治理增强（规划）
+### 服务治理增强（规划 TODO）
 
 **目标：** 对齐生产级服务治理能力
 
