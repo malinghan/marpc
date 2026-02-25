@@ -5,8 +5,10 @@ import com.malinghan.marpc.provider.ProviderBootstrap;
 import com.malinghan.marpc.transport.MarpcTransport;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.ContextRefreshedEvent;
 
 /**
  * marpc 框架的核心 Spring 配置类，由 {@link com.malinghan.marpc.annotation.EnableMarpc} 导入。
@@ -27,9 +29,7 @@ public class MarpcConfig {
 
     @Bean
     public ProviderBootstrap providerBootstrap(ApplicationContext context) {
-        ProviderBootstrap bootstrap = new ProviderBootstrap(context);
-        bootstrap.start();
-        return bootstrap;
+        return new ProviderBootstrap(context);
     }
 
     /**
@@ -38,9 +38,21 @@ public class MarpcConfig {
      */
     @Bean
     public ConsumerBootstrap consumerBootstrap(ApplicationContext context, ProviderBootstrap providerBootstrap) {
-        ConsumerBootstrap bootstrap = new ConsumerBootstrap(context, providerUrl);
-        bootstrap.start();
-        return bootstrap;
+        return new ConsumerBootstrap(context, providerUrl);
+    }
+
+    /**
+     * 监听 ContextRefreshedEvent，在所有 Bean 注册完成后再启动 Provider 和 Consumer。
+     * 这样可以确保 @MarpcProvider 和 @MarpcConsumer 注解的 Bean 都已经被扫描注册。
+     */
+    @Bean
+    public ApplicationListener<ContextRefreshedEvent> marpcBootstrapListener(
+            ProviderBootstrap providerBootstrap,
+            ConsumerBootstrap consumerBootstrap) {
+        return event -> {
+            providerBootstrap.start();
+            consumerBootstrap.start();
+        };
     }
 
     @Bean

@@ -4,6 +4,7 @@ import com.malinghan.marpc.annotation.MarpcProvider;
 import com.malinghan.marpc.core.RpcRequest;
 import com.malinghan.marpc.core.RpcResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.context.ApplicationContext;
 import org.springframework.util.ReflectionUtils;
 
@@ -26,16 +27,23 @@ public class ProviderBootstrap {
     }
 
     public void start() {
+        System.out.println("[ProviderBootstrap] 开始扫描 @MarpcProvider 注解的 Bean...");
         Map<String, Object> providers = context.getBeansWithAnnotation(MarpcProvider.class);
+        System.out.println("[ProviderBootstrap] 找到 " + providers.size() + " 个 Provider Bean");
         providers.values().forEach(bean -> {
-            for (Class<?> iface : bean.getClass().getInterfaces()) {
+            Class<?> targetClass = AopUtils.getTargetClass(bean);
+            for (Class<?> iface : targetClass.getInterfaces()) {
                 // 优化2：过滤掉系统接口，只注册用户自定义接口
                 if (isUserDefinedInterface(iface)) {
                     skeleton.put(iface.getCanonicalName(), bean);
+                    System.out.println("[ProviderBootstrap] 注册服务: " + iface.getCanonicalName());
                     log.info("marpc provider registered: {}", iface.getCanonicalName());
+                } else {
+                    System.out.println("[ProviderBootstrap] 过滤系统接口: " + iface.getCanonicalName());
                 }
             }
         });
+        System.out.println("[ProviderBootstrap] 服务注册完成，共 " + skeleton.size() + " 个服务");
     }
 
     private boolean isUserDefinedInterface(Class<?> iface) {
@@ -48,19 +56,27 @@ public class ProviderBootstrap {
      * 任何异常都被捕获并转为 error 响应，不向传输层抛出。
      */
     public RpcResponse invoke(RpcRequest request) {
+        System.out.println("[ProviderBootstrap] 收到请求: service=" + request.getService()
+                + ", method=" + request.getMethod()
+                + ", args=" + java.util.Arrays.toString(request.getArgs()));
+        System.out.println("[ProviderBootstrap] 当前 skeleton keys: " + skeleton.keySet());
         Object bean = skeleton.get(request.getService());
         if (bean == null) {
+            System.out.println("[ProviderBootstrap] 服务未找到: " + request.getService());
             return RpcResponse.error("service not found: " + request.getService());
         }
         try {
             Method method = findMethod(bean.getClass(), request.getMethod(), request.getArgs());
+            System.out.println("[ProviderBootstrap] 执行方法: " + method);
             Object result = ReflectionUtils.invokeMethod(method, bean, request.getArgs());
+            System.out.println("[ProviderBootstrap] 执行结果: " + result);
             return RpcResponse.ok(result);
         } catch (Exception e) {
             // 优化3：封装异常类名和消息，透传给 Consumer
             log.error("marpc invoke error", e);
             String errorMsg = e.getClass().getName() + ": " +
                 (e.getMessage() != null ? e.getMessage() : "null");
+            System.out.println("[ProviderBootstrap] 执行异常: " + errorMsg);
             return RpcResponse.error(errorMsg);
         }
     }
