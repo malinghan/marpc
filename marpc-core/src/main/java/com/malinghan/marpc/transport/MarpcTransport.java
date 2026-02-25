@@ -1,5 +1,6 @@
 package com.malinghan.marpc.transport;
 
+import com.malinghan.marpc.context.RpcContext;
 import com.malinghan.marpc.core.RpcRequest;
 import com.malinghan.marpc.core.RpcResponse;
 import com.malinghan.marpc.exception.MarpcBizException;
@@ -19,10 +20,15 @@ public class MarpcTransport {
 
     @PostMapping("/marpc")
     public RpcResponse invoke(@RequestBody RpcRequest request) {
+        if (request.getContext() != null && !request.getContext().isEmpty()) {
+            RpcContext.setAll(request.getContext());
+        }
         try {
             return providerBootstrap.invoke(request);
         } catch (MarpcBizException e) {
             return RpcResponse.error(e.getErrorCode() + ": " + e.getMessage());
+        } finally {
+            RpcContext.clear();
         }
     }
 }

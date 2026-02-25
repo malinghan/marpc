@@ -16,8 +16,13 @@ import com.malinghan.marpc.retry.RetryPolicy;
 import com.malinghan.marpc.router.GrayRouter;
 import com.malinghan.marpc.router.Router;
 import com.malinghan.marpc.transport.MarpcTransport;
+import com.malinghan.marpc.transport.OkHttpTransport;
+import com.malinghan.marpc.transport.RpcTransport;
+import com.malinghan.marpc.transport.netty.NettyRpcClient;
+import com.malinghan.marpc.transport.netty.NettyRpcServer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -79,6 +84,12 @@ public class MarpcConfig {
 
     @Value("${marpc.router.gray.ratio:0}")
     private int grayRatio;
+
+    @Value("${marpc.transport:okhttp}")
+    private String transportType;
+
+    @Value("${marpc.netty.port:9090}")
+    private int nettyPort;
 
     @Bean
     public RegistryCenter registryCenter() {
@@ -159,6 +170,22 @@ public class MarpcConfig {
     }
 
     @Bean
+    public RpcTransport rpcTransport() {
+        if ("netty".equalsIgnoreCase(transportType)) {
+            log.info("[MarpcConfig] 使用 Netty 传输");
+            return new NettyRpcClient(timeout);
+        }
+        log.info("[MarpcConfig] 使用 OkHttp 传输");
+        return new OkHttpTransport(timeout);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "marpc.transport", havingValue = "netty")
+    public NettyRpcServer nettyRpcServer(ProviderBootstrap providerBootstrap) {
+        return new NettyRpcServer(providerBootstrap, nettyPort);
+    }
+
+    @Bean
     public ConsumerBootstrap consumerBootstrap(ApplicationContext context,
                                                RegistryCenter registryCenter,
                                                LoadBalancer loadBalancer,
@@ -166,9 +193,10 @@ public class MarpcConfig {
                                                RetryPolicy retryPolicy,
                                                CircuitBreaker circuitBreaker,
                                                List<Router> routerChain,
+                                               RpcTransport rpcTransport,
                                                ProviderBootstrap providerBootstrap) {
         return new ConsumerBootstrap(context, registryCenter, loadBalancer, filterChain,
-                retryPolicy, circuitBreaker, routerChain);
+                retryPolicy, circuitBreaker, routerChain, rpcTransport);
     }
 
     @Bean

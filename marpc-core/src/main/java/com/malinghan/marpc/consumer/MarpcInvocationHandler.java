@@ -2,19 +2,19 @@ package com.malinghan.marpc.consumer;
 
 import com.alibaba.fastjson2.JSON;
 import com.malinghan.marpc.circuitbreaker.CircuitBreaker;
+import com.malinghan.marpc.context.RpcContext;
 import com.malinghan.marpc.core.RpcRequest;
 import com.malinghan.marpc.core.RpcResponse;
 import com.malinghan.marpc.exception.MarpcBizException;
 import com.malinghan.marpc.exception.MarpcNetworkException;
 import com.malinghan.marpc.filter.Filter;
 import com.malinghan.marpc.retry.RetryPolicy;
+import com.malinghan.marpc.transport.RpcTransport;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -23,7 +23,6 @@ import static com.malinghan.marpc.exception.MarpcException.ErrorCode.*;
 @Slf4j
 public class MarpcInvocationHandler implements InvocationHandler {
 
-    private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
     private static final Set<String> SYSTEM_PACKAGES = Set.of("java.", "javax.", "org.springframework.");
 
     private final Class<?> service;
@@ -31,25 +30,19 @@ public class MarpcInvocationHandler implements InvocationHandler {
     private final List<Filter> filters;
     private final RetryPolicy retryPolicy;
     private final CircuitBreaker circuitBreaker;
-    private final OkHttpClient client;
+    private final RpcTransport transport;
 
     public MarpcInvocationHandler(Class<?> service, Supplier<String> instanceSupplier,
                                    List<Filter> filters, RetryPolicy retryPolicy,
-                                   CircuitBreaker circuitBreaker) {
+                                   CircuitBreaker circuitBreaker, RpcTransport transport) {
         this.service = service;
         this.instanceSupplier = instanceSupplier;
         this.retryPolicy = retryPolicy;
         this.circuitBreaker = circuitBreaker;
-        // 按 order 升序排列，order 小的先执行
+        this.transport = transport;
         this.filters = filters.stream()
                 .sorted((a, b) -> Integer.compare(a.order(), b.order()))
                 .collect(Collectors.toList());
-        // 配置超时
-        this.client = new OkHttpClient.Builder()
-                .connectTimeout(retryPolicy.getTimeout(), TimeUnit.MILLISECONDS)
-                .readTimeout(retryPolicy.getTimeout(), TimeUnit.MILLISECONDS)
-                .writeTimeout(retryPolicy.getTimeout(), TimeUnit.MILLISECONDS)
-                .build();
     }
 
     @Override
@@ -64,32 +57,42 @@ public class MarpcInvocationHandler implements InvocationHandler {
         request.setMethodSign(buildMethodSign(method));
         request.setArgs(args);
 
-        // preFilter：任意 Filter 返回非 null 则短路
-        for (Filter filter : filters) {
-            RpcResponse shortCircuit = filter.preFilter(request);
-            if (shortCircuit != null) {
-                return convertResponse(method, shortCircuit);
+        // 填充隐式上下文参数
+        Map<String, String> ctx = RpcContext.getAll();
+        if (!ctx.isEmpty()) {
+            request.setContext(ctx);
+        }
+
+        try {
+            // preFilter：任意 Filter 返回非 null 则短路
+            for (Filter filter : filters) {
+                RpcResponse shortCircuit = filter.preFilter(request);
+                if (shortCircuit != null) {
+                    return convertResponse(method, shortCircuit);
+                }
             }
+
+            // 熔断器检查
+            circuitBreaker.preCall();
+
+            // 发起远程调用（带重试）
+            RpcResponse response = invokeWithRetry(request);
+
+            // postFilter：逆序执行
+            List<Filter> reversed = new ArrayList<>(filters);
+            Collections.reverse(reversed);
+            for (Filter filter : reversed) {
+                filter.postFilter(request, response);
+            }
+
+            if (!response.isStatus()) {
+                throw new MarpcBizException(SERVICE_NOT_FOUND, response.getErrorMessage());
+            }
+
+            return convertResponse(method, response);
+        } finally {
+            RpcContext.clear();
         }
-
-        // 熔断器检查
-        circuitBreaker.preCall();
-
-        // 发起远程调用（带重试）
-        RpcResponse response = invokeWithRetry(request);
-
-        // postFilter：逆序执行（后置处理按注册顺序的反向）
-        List<Filter> reversed = new ArrayList<>(filters);
-        Collections.reverse(reversed);
-        for (Filter filter : reversed) {
-            filter.postFilter(request, response);
-        }
-
-        if (!response.isStatus()) {
-            throw new MarpcBizException(SERVICE_NOT_FOUND, response.getErrorMessage());
-        }
-
-        return convertResponse(method, response);
     }
 
     private RpcResponse invokeWithRetry(RpcRequest request) {
@@ -104,7 +107,7 @@ public class MarpcInvocationHandler implements InvocationHandler {
             triedInstances.add(instance);
 
             try {
-                RpcResponse response = post(instance, request);
+                RpcResponse response = transport.send(instance, request);
                 if (response.isStatus()) {
                     circuitBreaker.onSuccess();
                     if (attempts > 1) {
@@ -112,7 +115,6 @@ public class MarpcInvocationHandler implements InvocationHandler {
                     }
                     return response;
                 }
-                // 业务异常不重试
                 return response;
             } catch (MarpcNetworkException e) {
                 lastError = e;
@@ -133,14 +135,12 @@ public class MarpcInvocationHandler implements InvocationHandler {
         if (!retryPolicy.isSwitchInstanceOnRetry() || triedInstances.isEmpty()) {
             return instanceSupplier.get();
         }
-        // 重试时尝试选择未调用过的实例
         for (int i = 0; i < 10; i++) {
             String instance = instanceSupplier.get();
             if (!triedInstances.contains(instance)) {
                 return instance;
             }
         }
-        // 10 次未找到新实例，返回任意实例
         return instanceSupplier.get();
     }
 
@@ -186,20 +186,5 @@ public class MarpcInvocationHandler implements InvocationHandler {
         if (type == byte.class || type == Byte.class) return Byte.parseByte(s);
         if (type == char.class || type == Character.class) return s.charAt(0);
         return data;
-    }
-
-    private RpcResponse post(String instance, RpcRequest request) {
-        try {
-            String url = "http://" + instance + "/marpc";
-            String body = JSON.toJSONString(request);
-            Request httpRequest = new Request.Builder()
-                    .url(url).post(RequestBody.create(body, JSON_TYPE)).build();
-            try (Response resp = client.newCall(httpRequest).execute()) {
-                String json = resp.body().string();
-                return JSON.parseObject(json, RpcResponse.class);
-            }
-        } catch (Exception e) {
-            throw new MarpcNetworkException(NETWORK_ERROR, "call failed: " + instance, e);
-        }
     }
 }

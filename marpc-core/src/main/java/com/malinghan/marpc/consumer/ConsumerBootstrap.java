@@ -8,6 +8,7 @@ import com.malinghan.marpc.loadbalance.LoadBalancer;
 import com.malinghan.marpc.registry.RegistryCenter;
 import com.malinghan.marpc.retry.RetryPolicy;
 import com.malinghan.marpc.router.Router;
+import com.malinghan.marpc.transport.RpcTransport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.ApplicationContext;
@@ -31,18 +32,20 @@ public class ConsumerBootstrap implements InitializingBean {
     private final RetryPolicy retryPolicy;
     private final CircuitBreaker circuitBreaker;
     private final List<Router> routers;
+    private final RpcTransport transport;
     private final Map<String, List<String>> serviceInstances = new ConcurrentHashMap<>();
 
     public ConsumerBootstrap(ApplicationContext context, RegistryCenter registryCenter,
                              LoadBalancer loadBalancer, List<Filter> filters,
                              RetryPolicy retryPolicy, CircuitBreaker circuitBreaker,
-                             List<Router> routers) {
+                             List<Router> routers, RpcTransport transport) {
         this.context = context;
         this.registryCenter = registryCenter;
         this.loadBalancer = loadBalancer;
         this.filters = filters;
         this.retryPolicy = retryPolicy;
         this.circuitBreaker = circuitBreaker;
+        this.transport = transport;
         // 按 order 排序
         this.routers = routers.stream()
                 .sorted((a, b) -> Integer.compare(a.order(), b.order()))
@@ -110,7 +113,7 @@ public class ConsumerBootstrap implements InitializingBean {
                         }
                     }
                     return loadBalancer.choose(instances);
-                }, filters, retryPolicy, circuitBreaker)
+                }, filters, retryPolicy, circuitBreaker, transport)
         );
     }
 }
