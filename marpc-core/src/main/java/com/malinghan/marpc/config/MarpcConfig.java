@@ -1,5 +1,7 @@
 package com.malinghan.marpc.config;
 
+import com.malinghan.marpc.circuitbreaker.CircuitBreaker;
+import com.malinghan.marpc.circuitbreaker.CircuitBreakerConfig;
 import com.malinghan.marpc.consumer.ConsumerBootstrap;
 import com.malinghan.marpc.filter.CacheFilter;
 import com.malinghan.marpc.filter.Filter;
@@ -10,6 +12,9 @@ import com.malinghan.marpc.loadbalance.RoundRobinLoadBalancer;
 import com.malinghan.marpc.provider.ProviderBootstrap;
 import com.malinghan.marpc.registry.RegistryCenter;
 import com.malinghan.marpc.registry.ZkRegistryCenter;
+import com.malinghan.marpc.retry.RetryPolicy;
+import com.malinghan.marpc.router.GrayRouter;
+import com.malinghan.marpc.router.Router;
 import com.malinghan.marpc.transport.MarpcTransport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,13 +44,41 @@ public class MarpcConfig {
     @Value("${marpc.loadbalancer:roundrobin}")
     private String lbStrategy;
 
-    /** 是否启用 CacheFilter，默认关闭 */
     @Value("${marpc.filter.cache.enabled:false}")
     private boolean cacheEnabled;
 
-    /** 是否启用 MockFilter，默认关闭 */
     @Value("${marpc.filter.mock.enabled:false}")
     private boolean mockEnabled;
+
+    @Value("${marpc.retry.maxRetries:2}")
+    private int maxRetries;
+
+    @Value("${marpc.retry.timeout:3000}")
+    private int timeout;
+
+    @Value("${marpc.retry.switchInstanceOnRetry:true}")
+    private boolean switchInstanceOnRetry;
+
+    @Value("${marpc.circuitbreaker.enabled:false}")
+    private boolean circuitBreakerEnabled;
+
+    @Value("${marpc.circuitbreaker.faultLimit:5}")
+    private int faultLimit;
+
+    @Value("${marpc.circuitbreaker.halfOpenInitialDelay:10000}")
+    private long halfOpenInitialDelay;
+
+    @Value("${marpc.circuitbreaker.halfOpenDelay:5000}")
+    private long halfOpenDelay;
+
+    @Value("${marpc.circuitbreaker.windowSize:10}")
+    private int windowSize;
+
+    @Value("${marpc.router.gray.enabled:false}")
+    private boolean grayRouterEnabled;
+
+    @Value("${marpc.router.gray.ratio:0}")
+    private int grayRatio;
 
     @Bean
     public RegistryCenter registryCenter() {
@@ -70,7 +103,6 @@ public class MarpcConfig {
         return new MockFilter();
     }
 
-    /** 组装 Filter 链，按配置开关决定是否启用 */
     @Bean
     public List<Filter> filterChain(CacheFilter cacheFilter, MockFilter mockFilter) {
         List<Filter> chain = new ArrayList<>();
@@ -86,6 +118,41 @@ public class MarpcConfig {
     }
 
     @Bean
+    public GrayRouter grayRouter() {
+        return new GrayRouter(grayRatio);
+    }
+
+    @Bean
+    public List<Router> routerChain(GrayRouter grayRouter) {
+        List<Router> chain = new ArrayList<>();
+        if (grayRouterEnabled) {
+            chain.add(grayRouter);
+            log.info("[MarpcConfig] GrayRouter 已启用，灰度比例: {}%", grayRatio);
+        }
+        return chain;
+    }
+
+    @Bean
+    public RetryPolicy retryPolicy() {
+        RetryPolicy policy = new RetryPolicy();
+        policy.setMaxRetries(maxRetries);
+        policy.setTimeout(timeout);
+        policy.setSwitchInstanceOnRetry(switchInstanceOnRetry);
+        return policy;
+    }
+
+    @Bean
+    public CircuitBreaker circuitBreaker() {
+        CircuitBreakerConfig config = new CircuitBreakerConfig();
+        config.setEnabled(circuitBreakerEnabled);
+        config.setFaultLimit(faultLimit);
+        config.setHalfOpenInitialDelay(halfOpenInitialDelay);
+        config.setHalfOpenDelay(halfOpenDelay);
+        config.setWindowSize(windowSize);
+        return new CircuitBreaker(config);
+    }
+
+    @Bean
     public ProviderBootstrap providerBootstrap(ApplicationContext context,
                                                RegistryCenter registryCenter) {
         return new ProviderBootstrap(context, registryCenter, providerInstance);
@@ -96,8 +163,12 @@ public class MarpcConfig {
                                                RegistryCenter registryCenter,
                                                LoadBalancer loadBalancer,
                                                List<Filter> filterChain,
+                                               RetryPolicy retryPolicy,
+                                               CircuitBreaker circuitBreaker,
+                                               List<Router> routerChain,
                                                ProviderBootstrap providerBootstrap) {
-        return new ConsumerBootstrap(context, registryCenter, loadBalancer, filterChain);
+        return new ConsumerBootstrap(context, registryCenter, loadBalancer, filterChain,
+                retryPolicy, circuitBreaker, routerChain);
     }
 
     @Bean

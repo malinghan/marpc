@@ -18,3 +18,17 @@ marpc:
       enabled: true
     mock:
       enabled: true
+  retry:
+    maxRetries: 2
+    timeout: 3000
+    switchInstanceOnRetry: true
+  circuitbreaker:
+    enabled: false
+    faultLimit: 5
+    halfOpenInitialDelay: 10000
+    halfOpenDelay: 5000
+    windowSize: 10
+  router:
+    gray:
+      enabled: false
+      ratio: 50
