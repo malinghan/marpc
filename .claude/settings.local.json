@@ -8,7 +8,8 @@
       "Bash(mvn dependency:tree -s /tmp/mvn-settings.xml 2>&1 | grep -A2 \"webmvc-test\\\\|test-autoconfigure\")",
       "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-test-autoconfigure/4.0.3/spring-boot-test-autoconfigure-4.0.3.jar | grep -i webmvc)",
       "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-webmvc-test/4.0.3/spring-boot-webmvc-test-4.0.3.jar 2>/dev/null | grep -i webmvc | head -20)",
-      "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-test/4.0.3/spring-boot-test-4.0.3.jar | grep -i \"MockitoBean\\\\|MockBean\")"
+      "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-test/4.0.3/spring-boot-test-4.0.3.jar | grep -i \"MockitoBean\\\\|MockBean\")",
+      "Bash(git commit -m \"$\\(cat <<'EOF'\nfix: 修复 Provider 服务注册失败问题\n\n1. 将 MarpcApplication 移至根包 com.malinghan.marpc，确保组件扫描覆盖所有子包\n2. 使用 AopUtils.getTargetClass\\(\\) 获取真实实现类，兼容 CGLIB 代理\n3. 通过 ContextRefreshedEvent 延迟启动，确保所有 Bean 注册完成后再扫描\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
