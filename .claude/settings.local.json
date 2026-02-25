@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn compile -q 2>&1 | tail -30)",
+      "Bash(mvn test -o 2>&1)",
+      "Bash(mvn test -s /dev/null 2>&1)",
+      "Bash(mvn test -s /tmp/mvn-settings.xml 2>&1)",
+      "Bash(mvn dependency:tree -s /tmp/mvn-settings.xml 2>&1 | grep -A2 \"webmvc-test\\\\|test-autoconfigure\")",
+      "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-test-autoconfigure/4.0.3/spring-boot-test-autoconfigure-4.0.3.jar | grep -i webmvc)",
+      "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-webmvc-test/4.0.3/spring-boot-webmvc-test-4.0.3.jar 2>/dev/null | grep -i webmvc | head -20)",
+      "Bash(jar tf /Users/malinghan/.m2/repository/org/springframework/boot/spring-boot-test/4.0.3/spring-boot-test-4.0.3.jar | grep -i \"MockitoBean\\\\|MockBean\")"
+    ]
+  }
+}

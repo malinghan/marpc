@@ -1,0 +1,316 @@
+openapi: 3.1.0
+info:
+  title: marpc - Lightweight Java RPC Framework
+  description: |
+    marpc 是一个基于 Spring Boot 4.x + Java 17 构建的轻量级 RPC 框架，
+    用于演示分布式系统核心概念：服务注册发现、负载均衡、容错、流量治理等。
+
+    本文档描述 marpc 框架对外暴露的 HTTP 传输层接口（Provider 端点）以及
+    框架内部各核心模块的契约规范。
+  version: 0.1.0
+  contact:
+    name: malinghan
+  license:
+    name: Apache 2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Provider 本地开发服务
+  - url: http://localhost:8081
+    description: Consumer 本地开发服务
+
+tags:
+  - name: transport
+    description: RPC 传输层 - Provider 端点
+  - name: registry
+    description: 服务注册中心接口
+  - name: health
+    description: 健康检查
+
+# ─────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────
+paths:
+
+  /marpc:
+    post:
+      tags: [transport]
+      summary: RPC 调用入口
+      description: |
+        Consumer 通过 HTTP POST 向 Provider 发起 RPC 调用。
+        请求体为 RpcRequest JSON，响应体为 RpcResponse JSON。
+      operationId: invoke
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RpcRequest'
+            examples:
+              simpleCall:
+                summary: 调用无参方法
+                value:
+                  service: "com.example.api.UserService"
+                  methodSign: "findAll@0"
+                  args: []
+              callWithArgs:
+                summary: 调用带参方法
+                value:
+                  service: "com.example.api.UserService"
+                  methodSign: "findById@1_java.lang.Long"
+                  args: [42]
+      responses:
+        '200':
+          description: 调用成功（业务异常也通过 200 返回，通过 status 字段区分）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RpcResponse'
+              examples:
+                success:
+                  summary: 成功响应
+                  value:
+                    status: true
+                    data: { id: 42, name: "Alice" }
+                    ex: null
+                businessError:
+                  summary: 业务异常
+                  value:
+                    status: false
+                    data: null
+                    ex:
+                      errorCode: "USER_NOT_FOUND"
+                      message: "用户不存在"
+        '500':
+          description: 框架内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RpcResponse'
+
+  /marpc/health:
+    get:
+      tags: [health]
+      summary: Provider 健康检查
+      operationId: health
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+
+  /registry/register:
+    post:
+      tags: [registry]
+      summary: 注册服务实例
+      description: Provider 启动时向注册中心注册自身实例信息
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInstance'
+      responses:
+        '200':
+          description: 注册成功
+
+  /registry/unregister:
+    post:
+      tags: [registry]
+      summary: 注销服务实例
+      operationId: unregister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInstance'
+      responses:
+        '200':
+          description: 注销成功
+
+  /registry/findAll:
+    get:
+      tags: [registry]
+      summary: 查询服务的所有实例
+      operationId: findAll
+      parameters:
+        - name: service
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 服务全限定名，如 com.example.api.UserService
+          example: "com.example.api.UserService"
+      responses:
+        '200':
+          description: 实例列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceInstance'
+
+  /registry/subscribe:
+    post:
+      tags: [registry]
+      summary: 订阅服务变更
+      description: Consumer 订阅某服务的实例变更通知（长轮询或 SSE）
+      operationId: subscribe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service:
+                  type: string
+                callbackUrl:
+                  type: string
+      responses:
+        '200':
+          description: 订阅成功
+
+# ─────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────
+components:
+  schemas:
+
+    RpcRequest:
+      type: object
+      required: [service, methodSign]
+      properties:
+        service:
+          type: string
+          description: 服务接口全限定名
+          example: "com.example.api.UserService"
+        methodSign:
+          type: string
+          description: |
+            方法签名，格式：methodName@paramCount_type1_type2
+            无参方法：findAll@0
+            单参方法：findById@1_java.lang.Long
+          example: "findById@1_java.lang.Long"
+        args:
+          type: array
+          items: {}
+          description: 方法参数列表（JSON 序列化）
+          example: [42]
+        params:
+          type: object
+          additionalProperties:
+            type: string
+          description: 隐式上下文参数（RpcContext 透传）
+          example: { "traceId": "abc123", "grayTag": "true" }
+
+    RpcResponse:
+      type: object
+      properties:
+        status:
+          type: boolean
+          description: true=成功，false=异常
+        data:
+          description: 返回值（任意类型）
+        ex:
+          $ref: '#/components/schemas/RpcException'
+
+    RpcException:
+      type: object
+      properties:
+        errorCode:
+          type: string
+          example: "RPC_TIMEOUT"
+        message:
+          type: string
+          example: "调用超时"
+
+    ServiceInstance:
+      type: object
+      required: [host, port, service]
+      properties:
+        host:
+          type: string
+          example: "192.168.1.10"
+        port:
+          type: integer
+          example: 8080
+        service:
+          type: string
+          description: 服务接口全限定名
+          example: "com.example.api.UserService"
+        metas:
+          type: object
+          additionalProperties:
+            type: string
+          description: 元数据（dc、gray、tc 等）
+          example:
+            dc: "bj"
+            gray: "false"
+            tc: "20"
+
+    AppConfig:
+      type: object
+      description: 应用级配置
+      properties:
+        id:
+          type: string
+          example: "marpc-app1"
+        env:
+          type: string
+          enum: [dev, test, prod]
+          example: "dev"
+        namespace:
+          type: string
+          example: "public"
+
+    ProviderConfig:
+      type: object
+      description: Provider 端配置
+      properties:
+        metas:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            dc: 数据中心标识
+            gray: 是否灰度节点
+            tc: 流量控制阈值（req/30s）
+
+    ConsumerConfig:
+      type: object
+      description: Consumer 端配置
+      properties:
+        retries:
+          type: integer
+          default: 1
+          description: 失败重试次数
+        timeout:
+          type: integer
+          default: 1000
+          description: 调用超时（ms）
+        grayRatio:
+          type: integer
+          default: 0
+          description: 灰度流量比例（0-100）
+        faultLimit:
+          type: integer
+          default: 10
+          description: 熔断触发阈值（错误次数）
+        halfOpenInitialDelay:
+          type: integer
+          default: 10000
+          description: 熔断后首次半开延迟（ms）
+        halfOpenDelay:
+          type: integer
+          default: 60000
+          description: 半开探测间隔（ms）
