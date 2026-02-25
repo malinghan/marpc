@@ -7,20 +7,15 @@ import okhttp3.*;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.util.Set;
 
-/**
- * Consumer 侧 JDK 动态代理的拦截器。
- *
- * <p>每个 RPC 接口对应一个实例，由 {@link ConsumerBootstrap} 在启动时创建并注入。
- * 当业务代码调用接口方法时，JDK 代理将调用路由到此处的 {@link #invoke} 方法，
- * 由它负责将本地方法调用转换为一次远程 HTTP 请求。
- */
 public class MarpcInvocationHandler implements InvocationHandler {
 
     private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
-    /** 被代理的服务接口，用于填充 RpcRequest.service 字段 */
+    // 非用户自定义接口的包前缀，来自这些包的方法直接本地执行
+    private static final Set<String> SYSTEM_PACKAGES = Set.of("java.", "javax.", "org.springframework.");
+
     private final Class<?> service;
-    /** Provider 的基础 URL，例如 http://localhost:8080 */
     private final String providerUrl;
     private final OkHttpClient client = new OkHttpClient();
 
@@ -29,46 +24,64 @@ public class MarpcInvocationHandler implements InvocationHandler {
         this.providerUrl = providerUrl;
     }
 
-    /**
-     * 拦截所有接口方法调用。
-     *
-     * <p>来自 {@link Object} 的方法（equals / hashCode / toString）直接在本地执行，
-     * 避免将这些基础方法误发到远端。其余方法封装为 {@link RpcRequest} 并通过 HTTP 发送。
-     */
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        // Object 基类方法不走网络，直接本地执行
-        if (method.getDeclaringClass() == Object.class) {
+        // 优化2：非用户自定义接口的方法（Object、Spring 等）直接本地执行
+        if (isSystemMethod(method)) {
             return method.invoke(this, args);
         }
 
-        // 构造 RPC 请求：接口全限定名 + 方法名 + 参数列表
         RpcRequest request = new RpcRequest();
         request.setService(service.getCanonicalName());
         request.setMethod(method.getName());
         request.setArgs(args);
 
         RpcResponse response = post(request);
-        // Provider 返回业务异常时，转为 RuntimeException 抛给调用方
         if (!response.isStatus()) {
+            // 优化3：将服务端封装的异常信息透传给调用方
             throw new RuntimeException(response.getErrorMessage());
         }
-        // fastjson2 根据方法声明的返回类型将 data 反序列化为正确的 Java 对象
-        return JSON.to(method.getReturnType(), response.getData());
+
+        // 优化1：基本类型及其包装类直接强转，跳过 JSON 转换
+        Class<?> returnType = method.getReturnType();
+        if (isPrimitive(returnType)) {
+            return castPrimitive(returnType, response.getData());
+        }
+        return JSON.to(returnType, response.getData());
     }
 
-    /**
-     * 将 {@link RpcRequest} 序列化为 JSON 并 POST 到 Provider 的 /marpc 端点。
-     *
-     * @return 反序列化后的 {@link RpcResponse}
-     */
+    private boolean isSystemMethod(Method method) {
+        String pkg = method.getDeclaringClass().getName();
+        return SYSTEM_PACKAGES.stream().anyMatch(pkg::startsWith);
+    }
+
+    private boolean isPrimitive(Class<?> type) {
+        return type.isPrimitive()
+                || type == Integer.class || type == Long.class || type == Double.class
+                || type == Float.class || type == Boolean.class || type == Short.class
+                || type == Byte.class || type == Character.class;
+    }
+
+    private Object castPrimitive(Class<?> type, Object data) {
+        if (data == null) return null;
+        String s = data.toString();
+        if (type == int.class || type == Integer.class) return Integer.parseInt(s);
+        if (type == long.class || type == Long.class) return Long.parseLong(s);
+        if (type == double.class || type == Double.class) return Double.parseDouble(s);
+        if (type == float.class || type == Float.class) return Float.parseFloat(s);
+        if (type == boolean.class || type == Boolean.class) return Boolean.parseBoolean(s);
+        if (type == short.class || type == Short.class) return Short.parseShort(s);
+        if (type == byte.class || type == Byte.class) return Byte.parseByte(s);
+        if (type == char.class || type == Character.class) return s.charAt(0);
+        return data;
+    }
+
     private RpcResponse post(RpcRequest request) throws Exception {
         String body = JSON.toJSONString(request);
         Request httpRequest = new Request.Builder()
                 .url(providerUrl + "/marpc")
                 .post(RequestBody.create(body, JSON_TYPE))
                 .build();
-        // try-with-resources 确保响应体被关闭，避免连接泄漏
         try (Response resp = client.newCall(httpRequest).execute()) {
             String json = resp.body().string();
             return JSON.parseObject(json, RpcResponse.class);

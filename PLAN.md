@@ -16,38 +16,29 @@
 - 注解：`@MarpcProvider`、`@MarpcConsumer`
 - Spring Boot 自动装配：`@EnableMarpc`
 
+### v1.1 - 优化 — 基础 RPC 骨架 ✅
+- **基本类型直接返回**：Consumer 侧对 `int/long/double/boolean` 等基本类型及其包装类，跳过 `JSON.to()` 转换，直接强转返回，避免不必要的序列化开销
+- **非用户接口过滤**：Provider 注册时过滤掉 `java.*` / `javax.*` / `org.springframework.*` 等非用户自定义接口；Consumer 代理拦截时同样过滤，对来自这些包的方法直接本地执行
+- **异常信息封装透传**：Provider 捕获业务异常后，将异常类名 + message 封装到 `RpcResponse.errorMessage`，Consumer 侧收到 `status=false` 时抛出携带完整信息的 `RuntimeException`
+
 ---
 
 ### v2.0 — 方法重载 & 类型系统
-
-**目标：** 解决方法签名歧义和参数类型转换
-
-- 方法签名规范：`methodName@paramCount_type1_type2`，解决重载歧义
-- JSON 反序列化到正确 Java 类型（基本类型、包装类、List、Map、自定义对象）
-- 返回值类型推断与转换
-
----
-
-### v3.0 — 服务注册与发现
-
-**目标：** 动态服务注册，脱离硬编码地址
-
-- 抽象 `RegistryCenter` 接口：`register` / `unregister` / `fetchAll` / `subscribe`
-- 实现 `ZkRegistryCenter`（Zookeeper + Curator）
-- 注册路径规范：`/{app}_{env}_{serviceName}/{host}_{port}`
-- Provider 启动时注册，优雅关闭时注销
-- Consumer 订阅变更，动态刷新服务列表
-
----
-
-### v4.0 — 负载均衡
-
-**目标：** 多实例下的请求分发
-
-- 抽象 `LoadBalancer` 接口
-- 实现 `RandomLoadBalancer`（随机）
-- 实现 `RoundRobinLoadBalancer`（轮询）
-- 配置项切换策略
+- 解决方法签名歧义和参数类型转换
+  - 方法签名规范：`methodName@paramCount_type1_type2`，解决重载歧义
+  - JSON 反序列化到正确 Java 类型（基本类型、包装类、List、Map、自定义对象）
+  - 返回值类型推断与转换
+- 动态服务注册，脱离硬编码地址
+  - 抽象 `RegistryCenter` 接口：`register` / `unregister` / `fetchAll` / `subscribe`
+  - 实现 `ZkRegistryCenter`（Zookeeper + Curator）
+  - 注册路径规范：`/{app}_{env}_{serviceName}/{host}_{port}`
+  - Provider 启动时注册，优雅关闭时注销
+  - Consumer 订阅变更，动态刷新服务列表
+- 多实例下的请求分发
+  - 抽象 `LoadBalancer` 接口
+  - 实现 `RandomLoadBalancer`（随机）
+  - 实现 `RoundRobinLoadBalancer`（轮询）
+  - 配置项切换策略
 
 ---
 

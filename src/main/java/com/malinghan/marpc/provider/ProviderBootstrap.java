@@ -10,37 +10,37 @@ import org.springframework.util.ReflectionUtils;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
-/**
- * Provider 侧启动引导类，负责服务注册与请求分发。
- *
- * <p>启动时扫描所有标注 {@link MarpcProvider} 的 Bean，将其实现的接口以全限定名为 key
- * 存入 skeleton map。收到 RPC 请求时，通过 skeleton map 查找实现类并用反射执行目标方法。
- */
 @Slf4j
 public class ProviderBootstrap {
 
+    // 优化2：非用户自定义接口的包前缀，注册时过滤
+    private static final Set<String> SYSTEM_PACKAGES = Set.of("java.", "javax.", "org.springframework.");
+
     private final ApplicationContext context;
-    // 接口全限定名 -> 实现类实例，是服务查找的核心数据结构
     private final Map<String, Object> skeleton = new HashMap<>();
 
     public ProviderBootstrap(ApplicationContext context) {
         this.context = context;
     }
 
-    /**
-     * 扫描所有 {@link MarpcProvider} Bean，将其实现的接口注册到 skeleton map。
-     * 由 {@link com.malinghan.marpc.config.MarpcConfig} 在 Bean 初始化时调用。
-     */
     public void start() {
         Map<String, Object> providers = context.getBeansWithAnnotation(MarpcProvider.class);
         providers.values().forEach(bean -> {
-            // 一个实现类可能实现多个接口，逐一注册
             for (Class<?> iface : bean.getClass().getInterfaces()) {
-                skeleton.put(iface.getCanonicalName(), bean);
-                log.info("marpc provider registered: {}", iface.getCanonicalName());
+                // 优化2：过滤掉系统接口，只注册用户自定义接口
+                if (isUserDefinedInterface(iface)) {
+                    skeleton.put(iface.getCanonicalName(), bean);
+                    log.info("marpc provider registered: {}", iface.getCanonicalName());
+                }
             }
         });
+    }
+
+    private boolean isUserDefinedInterface(Class<?> iface) {
+        String pkg = iface.getName();
+        return SYSTEM_PACKAGES.stream().noneMatch(pkg::startsWith);
     }
 
     /**
@@ -57,8 +57,11 @@ public class ProviderBootstrap {
             Object result = ReflectionUtils.invokeMethod(method, bean, request.getArgs());
             return RpcResponse.ok(result);
         } catch (Exception e) {
+            // 优化3：封装异常类名和消息，透传给 Consumer
             log.error("marpc invoke error", e);
-            return RpcResponse.error(e.getMessage());
+            String errorMsg = e.getClass().getName() + ": " +
+                (e.getMessage() != null ? e.getMessage() : "null");
+            return RpcResponse.error(errorMsg);
         }
     }
 
