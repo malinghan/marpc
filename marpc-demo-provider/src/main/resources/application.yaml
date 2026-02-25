@@ -3,15 +3,21 @@ spring:
     name: marpc-demo-provider
 
 server:
-  port: 8081
+  port: 7081
 
 marpc:
-  zk:
-    address: localhost:2181
+  # 注册中心配置 - 可选: zookeeper | maregistry
+  registry:
+#    type: zookeeper  # 默认使用 zookeeper
+#  zk:
+#    address: localhost:2181
+    type: maregistry
+  maregistry:
+    address: http://localhost:8081
   app: marpc-app
   env: dev
-  provider:
-    instance: localhost:8080
+#  provider:
+#    instance: localhost:8080
   loadbalancer: roundrobin
   transport: netty
   netty:

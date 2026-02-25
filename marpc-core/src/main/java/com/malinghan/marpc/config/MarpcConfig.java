@@ -12,6 +12,7 @@ import com.malinghan.marpc.loadbalance.RoundRobinLoadBalancer;
 import com.malinghan.marpc.provider.ProviderBootstrap;
 import com.malinghan.marpc.registry.RegistryCenter;
 import com.malinghan.marpc.registry.ZkRegistryCenter;
+import com.malinghan.marpc.registry.MaregistryCenter;
 import com.malinghan.marpc.retry.RetryPolicy;
 import com.malinghan.marpc.router.GrayRouter;
 import com.malinghan.marpc.router.Router;
@@ -36,6 +37,12 @@ public class MarpcConfig {
 
     @Value("${marpc.zk.address:localhost:2181}")
     private String zkAddress;
+
+    @Value("${marpc.maregistry.address:http://localhost:8081}")
+    private String maregistryAddress;
+
+    @Value("${marpc.registry.type:zookeeper}")
+    private String registryType;
 
     @Value("${marpc.app:marpc-app}")
     private String app;
@@ -96,7 +103,14 @@ public class MarpcConfig {
 
     @Bean
     public RegistryCenter registryCenter() {
-        ZkRegistryCenter rc = new ZkRegistryCenter(zkAddress, app, env);
+        RegistryCenter rc;
+        if ("maregistry".equalsIgnoreCase(registryType)) {
+            rc = new MaregistryCenter(maregistryAddress);
+            log.info("[MarpcConfig] 使用 Maregistry 注册中心: {}", maregistryAddress);
+        } else {
+            rc = new ZkRegistryCenter(zkAddress, app, env);
+            log.info("[MarpcConfig] 使用 Zookeeper 注册中心: {}", zkAddress);
+        }
         rc.start();
         return rc;
     }

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(cd /Users/malinghan/project/marpc && mvn compile -pl marpc-core 2>&1)",
+      "Bash(cd /Users/malinghan/project/marpc && mvn test -pl marpc-core -Dtest=MaregistryCenterTest 2>&1 | tail -50)"
+    ]
+  }
+}
