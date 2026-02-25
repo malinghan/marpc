@@ -23,47 +23,57 @@
 
 ---
 
-### v2.0 — 方法重载 & 类型系统
-- 解决方法签名歧义和参数类型转换
-  - 方法签名规范：`methodName@paramCount_type1_type2`，解决重载歧义
-  - JSON 反序列化到正确 Java 类型（基本类型、包装类、List、Map、自定义对象）
-  - 返回值类型推断与转换
-- 动态服务注册，脱离硬编码地址
+### v2.0 — 反序列化处理 & 方法重载 & 类型转换处理 & 注册中心接入 & 负载均衡处理
+- 解决序列化和反序列表的过程中方法签名歧义和参数类型转换
+  - 方法签名规范：`methodName@paramCount_type1_type2`，解决重载歧义(之前没有对方法签名进行规范化处理)
+  - JSON 反序列化到正确 Java 类型（基本类型、包装类、List、Map、自定义对象）：之前provider反序列化会存在类型转换问题
+  - 返回值类型推断与转换：返回的类型也会有转换问题
+- 动态服务注册，脱离硬编码地址，可以接入zk或自定义的注册中心
   - 抽象 `RegistryCenter` 接口：`register` / `unregister` / `fetchAll` / `subscribe`
   - 实现 `ZkRegistryCenter`（Zookeeper + Curator）
   - 注册路径规范：`/{app}_{env}_{serviceName}/{host}_{port}`
   - Provider 启动时注册，优雅关闭时注销
   - Consumer 订阅变更，动态刷新服务列表
-- 多实例下的请求分发
+- 简单的负载均衡，实现多实例下的请求分发
   - 抽象 `LoadBalancer` 接口
   - 实现 `RandomLoadBalancer`（随机）
   - 实现 `RoundRobinLoadBalancer`（轮询）
   - 配置项切换策略
+- 生成以上功能的测试方法，不用junit，简化测试流程，通过构造测试步骤，输出直观结果，来验证代码是否正确
 
 ---
 
-### v5.0 — 代码重构
+### v3.0 — 模块拆分 & 统一异常体系 & 规范 Bean 生命周期
 
 **目标：** 整理架构，为后续扩展打好基础
 
 - 多模块拆分：`marpc-core` / `marpc-demo-api` / `marpc-demo-provider` / `marpc-demo-consumer`
+  -    `marpc-core` 存放consumer、provider都需要的核心rpc结构体和协议定义
+  -    `marpc-demo-api`: 存放demo程序的service bean定义，例如HelloService、UserService、OrderService
+  -    `marpc-demo-provider`: 存放demo程序的service provider定义，作为一个provider服务启动
+  -    `marpc-demo-consumer`: 存放demo程序的service consumer定义，作为一个consumer服务启动
+  - 在marpc-demo-provider和marpc-demo-consumer中构造不同的使用场景，来测试marpc的功能
+
 - 统一异常体系：`MarpcException`，区分业务异常 / 框架异常 / 网络异常
-- 规范 Bean 生命周期，清理启动流程
+
+- 规范 Bean 生命周期，清理启动流程，在启动时新增测试日志
+
+- 生成以上功能的测试方法，简化测试流程，通过构造测试步骤，输出直观结果，来验证代码是否正确
 
 ---
 
-### v6.0 — Filter 机制
+### v4.0 — 实现Rpc的Filter 机制
 
 **目标：** 可插拔的请求/响应处理链
 
 - 抽象 `Filter` 接口（`preFilter` / `postFilter`）
-- 实现 `CacheFilter`（Consumer 端结果缓存）
+- 实现 `CacheFilter`: Consumer 端结果缓存, 节约流量开销
 - 实现 `MockFilter`（接口 Mock 返回，用于测试）
 - Filter 链组装与执行顺序控制
 
 ---
 
-### v7.0 — 单元测试 & 工程质量
+### v5.0 — 单元测试 & 工程质量
 
 **目标：** 提升工程质量，建立测试基线
 
@@ -73,9 +83,9 @@
 
 ---
 
-### v8.0 — 异常处理 & 重试
+### v6.0 — 异常处理 & 重试 & 熔断
 
-**目标：** 提升调用可靠性
+**目标1：** 异常处理、重试机制，提升调用可靠性
 
 - 异常分类：业务异常 vs 框架异常 vs 网络异常
 - Consumer 端可配置重试次数（`retries`）
@@ -83,11 +93,7 @@
 - 异常信息透传到 Consumer 端并还原
 - 重试时自动切换节点，避免打到同一故障实例
 
----
-
-### v9.0 — 熔断器
-
-**目标：** 防止雪崩，快速失败
+**目标2：** 熔断机制：防止雪崩，快速失败
 
 - 滑动时间窗口统计失败率
 - 熔断状态机：`Closed → Open → Half-Open → Closed`
@@ -96,7 +102,7 @@
 
 ---
 
-### v10.0 — 灰度路由
+### v7.0 — 灰度路由
 
 **目标：** 支持灰度发布
 
@@ -107,7 +113,7 @@
 
 ---
 
-### v11.0 — 隐式传参（RpcContext）
+### v8.0 — 隐式传参（RpcContext）
 
 **目标：** 跨调用链传递上下文，避免业务代码侵入
 
@@ -118,7 +124,7 @@
 
 ---
 
-### v12.0 — 统一配置 & 流量控制
+### v9.0 — 配置中心接入 & 流量控制 
 
 **目标：** 生产可用
 
