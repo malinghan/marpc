@@ -13,3 +13,8 @@ marpc:
   provider:
     instance: localhost:8080
   loadbalancer: roundrobin
+  filter:
+    cache:
+      enabled: true
+    mock:
+      enabled: true

@@ -2,6 +2,7 @@ package com.malinghan.marpc.consumer;
 
 import com.malinghan.marpc.annotation.MarpcConsumer;
 import com.malinghan.marpc.exception.MarpcFrameworkException;
+import com.malinghan.marpc.filter.Filter;
 import com.malinghan.marpc.loadbalance.LoadBalancer;
 import com.malinghan.marpc.registry.RegistryCenter;
 import lombok.extern.slf4j.Slf4j;
@@ -22,19 +23,22 @@ public class ConsumerBootstrap implements InitializingBean {
     private final ApplicationContext context;
     private final RegistryCenter registryCenter;
     private final LoadBalancer loadBalancer;
+    private final List<Filter> filters;
     private final Map<String, List<String>> serviceInstances = new ConcurrentHashMap<>();
 
     public ConsumerBootstrap(ApplicationContext context, RegistryCenter registryCenter,
-                             LoadBalancer loadBalancer) {
+                             LoadBalancer loadBalancer, List<Filter> filters) {
         this.context = context;
         this.registryCenter = registryCenter;
         this.loadBalancer = loadBalancer;
+        this.filters = filters;
     }
 
-    /** Spring InitializingBean 回调，所有 Bean 就绪后自动执行 */
     @Override
     public void afterPropertiesSet() {
         log.info("[ConsumerBootstrap] === 启动阶段：扫描并注入 RPC 代理 ===");
+        log.info("[ConsumerBootstrap] 已加载 {} 个 Filter: {}", filters.size(),
+                filters.stream().map(f -> f.getClass().getSimpleName()).toList());
         Map<String, Object> beans = context.getBeansOfType(Object.class);
         beans.values().forEach(this::injectConsumers);
         log.info("[ConsumerBootstrap] === 启动完成 ===");
@@ -79,7 +83,7 @@ public class ConsumerBootstrap implements InitializingBean {
                                 "no available instance for: " + service);
                     }
                     return loadBalancer.choose(instances);
-                })
+                }, filters)
         );
     }
 }

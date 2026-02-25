@@ -5,11 +5,14 @@ import com.malinghan.marpc.core.RpcRequest;
 import com.malinghan.marpc.core.RpcResponse;
 import com.malinghan.marpc.exception.MarpcBizException;
 import com.malinghan.marpc.exception.MarpcNetworkException;
+import com.malinghan.marpc.filter.Filter;
 import okhttp3.*;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -23,11 +26,17 @@ public class MarpcInvocationHandler implements InvocationHandler {
 
     private final Class<?> service;
     private final Supplier<String> instanceSupplier;
+    private final List<Filter> filters;
     private final OkHttpClient client = new OkHttpClient();
 
-    public MarpcInvocationHandler(Class<?> service, Supplier<String> instanceSupplier) {
+    public MarpcInvocationHandler(Class<?> service, Supplier<String> instanceSupplier,
+                                   List<Filter> filters) {
         this.service = service;
         this.instanceSupplier = instanceSupplier;
+        // 按 order 升序排列，order 小的先执行
+        this.filters = filters.stream()
+                .sorted((a, b) -> Integer.compare(a.order(), b.order()))
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -42,13 +51,36 @@ public class MarpcInvocationHandler implements InvocationHandler {
         request.setMethodSign(buildMethodSign(method));
         request.setArgs(args);
 
+        // preFilter：任意 Filter 返回非 null 则短路
+        for (Filter filter : filters) {
+            RpcResponse shortCircuit = filter.preFilter(request);
+            if (shortCircuit != null) {
+                return convertResponse(method, shortCircuit);
+            }
+        }
+
+        // 发起远程调用
         String instance = instanceSupplier.get();
         RpcResponse response = post(instance, request);
+
+        // postFilter：逆序执行（后置处理按注册顺序的反向）
+        List<Filter> reversed = new java.util.ArrayList<>(filters);
+        Collections.reverse(reversed);
+        for (Filter filter : reversed) {
+            filter.postFilter(request, response);
+        }
 
         if (!response.isStatus()) {
             throw new MarpcBizException(SERVICE_NOT_FOUND, response.getErrorMessage());
         }
 
+        return convertResponse(method, response);
+    }
+
+    private Object convertResponse(Method method, RpcResponse response) {
+        if (!response.isStatus()) {
+            throw new MarpcBizException(SERVICE_NOT_FOUND, response.getErrorMessage());
+        }
         Class<?> returnType = method.getReturnType();
         if (returnType == void.class) return null;
         if (isPrimitive(returnType)) return castPrimitive(returnType, response.getData());
@@ -100,8 +132,7 @@ public class MarpcInvocationHandler implements InvocationHandler {
                 return JSON.parseObject(json, RpcResponse.class);
             }
         } catch (Exception e) {
-            throw new MarpcNetworkException(NETWORK_ERROR,
-                    "call failed: " + instance, e);
+            throw new MarpcNetworkException(NETWORK_ERROR, "call failed: " + instance, e);
         }
     }
 }
