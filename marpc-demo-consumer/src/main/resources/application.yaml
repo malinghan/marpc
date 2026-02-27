@@ -13,7 +13,7 @@ marpc:
     #    address: localhost:2181
     type: maregistry
   maregistry:
-    address: http://localhost:8081
+    address: http://localhost:8484
   app: marpc-app
   env: dev
   provider:
